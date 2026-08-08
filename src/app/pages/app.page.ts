@@ -16,7 +16,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
   ],
   template: `
     <mat-toolbar class="toolbar">
-      <a class="brand" routerLink="/">
+      <a class="brand" routerLink="/app">
         <mat-icon>public</mat-icon>
         <span>GeoTrade</span>
       </a>
@@ -24,7 +24,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
       <nav class="nav">
         <a
           matButton
-          routerLink="/"
+          routerLink="/app"
           routerLinkActive="active"
           [routerLinkActiveOptions]="{ exact: true }"
           >Home</a

@@ -7,7 +7,7 @@ import { MatIconModule } from '@angular/material/icon';
   imports: [RouterOutlet, RouterLink, MatIconModule],
   template: `
     <section class="brand-pane">
-      <a class="brand" routerLink="/">
+      <a class="brand" routerLink="/app">
         <mat-icon>public</mat-icon>
         <span>GeoTrade</span>
       </a>
