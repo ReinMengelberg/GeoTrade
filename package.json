@@ -26,6 +26,7 @@
     "@angular/platform-server": "^22.0.0",
     "@angular/router": "^22.0.0",
     "@tailwindcss/vite": "^4.1.4",
+    "drizzle": "^1.4.0",
     "front-matter": "^4.0.2",
     "h3": "^1.13.0",
     "marked": "^15.0.7",
