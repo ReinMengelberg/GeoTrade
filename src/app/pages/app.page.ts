@@ -15,27 +15,52 @@ import { MatToolbarModule } from '@angular/material/toolbar';
     MatIconModule,
   ],
   template: `
-    <mat-toolbar class="toolbar">
-      <a class="brand" routerLink="/app">
-        <mat-icon>public</mat-icon>
-        <span>GeoTrade</span>
-      </a>
 
-      <nav class="nav">
-        <a
-          matButton
-          routerLink="/app"
-          routerLinkActive="active"
-          [routerLinkActiveOptions]="{ exact: true }"
-          >Home</a
-        >
-      </nav>
 
-      <span class="spacer"></span>
+<mat-toolbar class="toolbar">
 
-      <a matButton="outlined" routerLink="/auth/login">Sign in</a>
-    </mat-toolbar>
+  <a class="brand" routerLink="/app">
+    <mat-icon>public</mat-icon>
+    <span>GeoTrade</span>
+  </a>
 
+  <nav class="nav">
+    <a
+      matButton
+      routerLink="/app"
+      routerLinkActive="active"
+      [routerLinkActiveOptions]="{ exact: true }"
+    >
+      Home
+    </a>
+
+    <a
+      matButton
+      routerLink="/app/map"
+      routerLinkActive="active"
+    >
+      Map
+    </a>
+
+    <a
+      matButton
+      routerLink="/app/settings"
+      routerLinkActive="active"
+    >
+      Settings
+    </a>
+  </nav>
+
+</mat-toolbar>
+
+<a
+  class="sign-in"
+  matButton="outlined"
+  routerLink="/auth/login"
+>
+  Sign in
+</a>
+    
     <main class="content">
       <router-outlet />
     </main>
@@ -47,29 +72,39 @@ import { MatToolbarModule } from '@angular/material/toolbar';
       min-height: 100vh;
     }
 
-    .toolbar {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      gap: 1rem;
-      background: var(--mat-sys-surface-container);
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
-    }
+.sign-in {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+}
 
-    .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      color: inherit;
-      text-decoration: none;
-      font: var(--mat-sys-title-medium);
-    }
+.toolbar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 240px;
 
-    .nav {
-      display: flex;
-      gap: 0.25rem;
-    }
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 
+  padding: 1rem;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
     .nav .active {
       background: var(--mat-sys-secondary-container);
     }
