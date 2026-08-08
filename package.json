@@ -27,7 +27,6 @@
     "@angular/platform-browser": "^22.0.0",
     "@angular/platform-server": "^22.0.0",
     "@angular/router": "^22.0.0",
-    "@tailwindcss/vite": "^4.1.4",
     "front-matter": "^4.0.2",
     "h3": "^1.13.0",
     "marked": "^15.0.7",
@@ -37,7 +36,6 @@
     "postcss": "^8.5.3",
     "prismjs": "^1.29.0",
     "rxjs": "~7.8.0",
-    "tailwindcss": "^4.1.4",
     "tslib": "^2.3.0"
   },
   "devDependencies": {

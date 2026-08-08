@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 
-import { AnalogWelcome } from './analog-welcome';
+import { AnalogWelcome } from '../../components/analog-welcome';
 
 @Component({
   selector: 'app-home',
