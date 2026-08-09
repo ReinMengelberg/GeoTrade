@@ -15,9 +15,18 @@
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@tailwindcss/vite": "^4.3.3",
+		"dotenv": "^17.4.2",
+		"drizzle-kit": "^0.31.10",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
+		"tailwindcss": "^4.3.3",
 		"typescript": "^6.0.3",
 		"vite": "^8.0.16"
+	},
+	"dependencies": {
+		"better-auth": "^1.6.26",
+		"drizzle-orm": "^0.45.2",
+		"postgres": "^3.4.9"
 	}
 }
