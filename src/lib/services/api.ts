@@ -49,6 +49,12 @@ export class ApiClient {
 	}
 }
 
+// Shared client for store methods, which only run from browser events — the
+// global fetch is always correct there. Load functions must not use this:
+// they create their own ApiClient(fetch) so SSR forwards cookies and inlines
+// responses. Safe as a module singleton because it holds no request state.
+export const api = new ApiClient();
+
 async function errorMessage(res: Response): Promise<string> {
 	try {
 		const data = await res.json();
