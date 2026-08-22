@@ -3,8 +3,14 @@
     import * as Sidebar from "$lib/components/ui/sidebar/index.js";
     import { Separator } from "$lib/components/ui/separator/index.js";
     import AppSidebar from "$lib/components/app-sidebar.svelte";
+    import { initStores } from "$lib/stores";
 
-    let { children } = $props();
+    let { data, children } = $props();
+
+    // Seed-once: after this, the stores own the data and mutations go through
+    // their methods. A re-run of the layout load does not re-seed.
+    // svelte-ignore state_referenced_locally
+    initStores({ trades: data.trades });
 </script>
 
 <Sidebar.Provider>

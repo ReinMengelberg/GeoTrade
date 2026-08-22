@@ -8,18 +8,45 @@ export class ApiError extends Error {
 	}
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-	const res = await fetch(path, {
-		method,
-		headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-		body: body === undefined ? undefined : JSON.stringify(body)
-	});
+export class ApiClient {
+	// On the server this must be the fetch provided to a load function, so
+	// cookies are forwarded and relative URLs resolve during SSR. In the
+	// browser the default global fetch is correct.
+	constructor(private fetchFn: typeof fetch = fetch) {}
 
-	if (!res.ok) {
-		throw new ApiError(res.status, await errorMessage(res));
+	get<T>(path: string): Promise<T> {
+		return this.request('GET', path);
 	}
 
-	return res.status === 204 ? (undefined as T) : res.json();
+	post<T>(path: string, body?: unknown): Promise<T> {
+		return this.request('POST', path, body);
+	}
+
+	put<T>(path: string, body?: unknown): Promise<T> {
+		return this.request('PUT', path, body);
+	}
+
+	patch<T>(path: string, body?: unknown): Promise<T> {
+		return this.request('PATCH', path, body);
+	}
+
+	delete<T>(path: string): Promise<T> {
+		return this.request('DELETE', path);
+	}
+
+	private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+		const res = await this.fetchFn(path, {
+			method,
+			headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+			body: body === undefined ? undefined : JSON.stringify(body)
+		});
+
+		if (!res.ok) {
+			throw new ApiError(res.status, await errorMessage(res));
+		}
+
+		return res.status === 204 ? (undefined as T) : res.json();
+	}
 }
 
 async function errorMessage(res: Response): Promise<string> {
@@ -30,11 +57,3 @@ async function errorMessage(res: Response): Promise<string> {
 		return res.statusText;
 	}
 }
-
-export const api = {
-	get: <T>(path: string) => request<T>('GET', path),
-	post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
-	put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
-	patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-	delete: <T>(path: string) => request<T>('DELETE', path)
-};
