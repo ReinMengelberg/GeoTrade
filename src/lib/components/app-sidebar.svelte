@@ -144,11 +144,10 @@
   import GalleryVerticalEndIcon from "@lucide/svelte/icons/gallery-vertical-end";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import type { ComponentProps } from "svelte";
-  import { signOut } from "$lib/auth-client";
+  import { auth } from "$lib/stores/auth.svelte";
   let { ref = $bindable(null), ...restProps }: ComponentProps<typeof Sidebar.Root> = $props();
   async function handleSignOut() {
-    await signOut();
-    window.location.href = "/login";
+    await auth.signOut();
   }
 </script>
 <Sidebar.Root {...restProps} bind:ref>

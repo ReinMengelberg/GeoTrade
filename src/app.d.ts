@@ -9,7 +9,10 @@ declare global {
 			user: User | null;
 			session: Session | null;
 		}
-		// interface PageData {}
+		interface PageData {
+			// Populated by routes whose layout load returns the user (currently (app)).
+			user?: User | null;
+		}
 		// interface PageState {}
 		// interface Platform {}
 	}

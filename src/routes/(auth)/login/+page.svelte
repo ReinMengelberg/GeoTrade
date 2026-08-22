@@ -2,7 +2,8 @@
     import * as Field from "$lib/components/ui/field/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
-    import { signIn, signUp } from "$lib/auth-client";
+    import { goto } from "$app/navigation";
+    import { auth } from "$lib/stores/auth.svelte";
 
     let email = $state('');
     let password = $state('');
@@ -13,29 +14,22 @@
 
         errorMessage = '';
 
-        const result = await signIn.email({
-            email,
-            password
-        });
+        const error = await auth.signIn(email, password);
 
-        console.log('login result:', result);
-
-        if (result.error) {
-            errorMessage = result.error.message ?? 'Invalid email or password';
+        if (error) {
+            errorMessage = error.message ?? 'Invalid email or password';
             return;
         }
 
-        window.location.href = '/dashboard';
+        await goto('/dashboard');
     }
 
     async function createTestUser() {
-        const result = await signUp.email({
-            email: 'test@example.com',
-            password: 'password123',
-            name: 'Test User'
-        });
+        const error = await auth.signUp('Test User', 'test@example.com', 'password123');
 
-        console.log('signup result:', result);
+        if (error) {
+            errorMessage = error.message ?? 'Could not create test user';
+        }
     }
 </script>
 
@@ -79,11 +73,11 @@
             </p>
         {/if}
 
-        <Button type="submit" class="h-10">
+        <Button type="submit" class="h-10" disabled={auth.pending}>
             Sign in
         </Button>
 
-        <Button type="button" class="h-10" onclick={createTestUser}>
+        <Button type="button" class="h-10" disabled={auth.pending} onclick={createTestUser}>
             Create test user
         </Button>
     </Field.Group>
