@@ -11,3 +11,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	return svelteKitHandler({ auth, event, resolve, building });
 };
+
+
+// // temp code for testing
+// import type { Handle } from '@sveltejs/kit';
+
+// export const handle: Handle = async ({ event, resolve }) => {
+//     return resolve(event);
+// };
