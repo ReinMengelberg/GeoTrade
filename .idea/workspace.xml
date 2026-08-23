@@ -11,7 +11,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="48" />
+    <option name="cachedIndexableFilesCount" value="32" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -46,9 +46,10 @@
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "codeWithMe.voiceChat.enabledByDefault": "false",
     "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "migrate-to-sveltekit",
+    "git-widget-placeholder": "staging",
     "javascript.preferred.runtime.type.id": "node",
     "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "/Users/rein/Documents/42/rank6/GeoTrade",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -90,6 +91,7 @@
       <updated>1786184684362</updated>
       <workItem from="1786184685380" duration="7985000" />
       <workItem from="1786263667840" duration="2872000" />
+      <workItem from="1786275363981" duration="7211000" />
     </task>
     <servers />
   </component>
