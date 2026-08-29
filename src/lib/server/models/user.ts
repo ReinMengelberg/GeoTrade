@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { Model, type AssertTrue, type Equals, type Row } from '../model';
-import { user } from '../schema/user';
+import { user } from '../db/schema/user';
+import { Model, type AssertTrue, type Equals, type Row } from './model';
 
 /**
  * A row of the `user` table. Declared explicitly so it can be named in return

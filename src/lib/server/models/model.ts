@@ -1,6 +1,6 @@
 import { count, eq, type SQL } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
-import { db } from './index';
+import { db } from '../db';
 
 // An Eloquent-style base class: each entity gets one subclass that declares its
 // table and its mass-assignable columns (`fillable`).
