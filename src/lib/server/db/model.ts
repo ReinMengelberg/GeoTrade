@@ -76,9 +76,17 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 	}
 
 	async create(attributes: Pick<Insert<T>, F>): Promise<Row<T>> {
+		const values = this.only(attributes);
+		const id = this.generateId();
+
+		if (id !== undefined && values.id === undefined) values.id = id;
+
+		// `values` holds exactly the `fillable` keys plus a generated id, and
+		// `create`'s signature already types them. Drizzle cannot verify that for
+		// a still-generic `T`, so the assertion is contained to this boundary.
 		const rows = await db
 			.insert(this.table)
-			.values(this.only(attributes))
+			.values(values as Insert<T>)
 			.returning();
 
 		return this.hydrate(rows[0]);
@@ -87,7 +95,7 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 	async update(id: Id<T>, attributes: Partial<Pick<Insert<T>, F>>): Promise<Row<T> | null> {
 		const rows = await db
 			.update(this.table)
-			.set(this.only(attributes))
+			.set(this.only(attributes) as Insert<T>)
 			.where(eq(this.table.id, id))
 			.returning();
 
@@ -101,6 +109,16 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 	}
 
 	/**
+	 * Primary keys are generated in application code for tables whose `id` has no
+	 * database default — which is every Better Auth table. Override in a subclass
+	 * for those; leave it alone when the column has a default and the database
+	 * should assign the value.
+	 */
+	protected generateId(): string | undefined {
+		return undefined;
+	}
+
+	/**
 	 * Escape hatch. Joins, transactions, partial selects and aggregates are all
 	 * better expressed in Drizzle directly — reach for this instead of growing
 	 * the base class until it is a second query builder.
@@ -110,17 +128,14 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 	}
 
 	/** Strips everything not listed in `fillable`. */
-	private only(attributes: object): Insert<T> {
+	private only(attributes: object): Record<string, unknown> {
 		const values: Record<string, unknown> = {};
 
 		for (const key of this.fillable) {
 			if (key in attributes) values[key] = (attributes as Record<string, unknown>)[key];
 		}
 
-		// Safe by construction: the keys are exactly `fillable`, and the public
-		// `create` / `update` signatures already type them. Drizzle cannot verify
-		// this for a still-generic `T`, so the assertion is contained here.
-		return values as Insert<T>;
+		return values;
 	}
 
 	/** Applies `casts` to a row coming out of the database. */
@@ -153,4 +168,15 @@ function applyCast(value: unknown, cast: Cast): unknown {
 		case 'json':
 			return typeof value === 'string' ? JSON.parse(value) : value;
 	}
+}
+
+/** Random 32-character id, matching the shape Better Auth generates. */
+export function randomId(length = 32): string {
+	const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+	const bytes = crypto.getRandomValues(new Uint8Array(length));
+	let id = '';
+
+	for (let i = 0; i < length; i++) id += alphabet[bytes[i] % alphabet.length];
+
+	return id;
 }

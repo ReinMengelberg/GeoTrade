@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { Model } from '../model';
+import { Model, randomId } from '../model';
 import { user } from '../schema/user';
 
 // Better Auth owns the write lifecycle for this table — sign-up hashes the
@@ -16,6 +16,12 @@ class UserModel extends Model<typeof user, 'name' | 'email' | 'image'> {
 	// Empty because every column on `user` already arrives correctly typed from
 	// the schema — `email_verified` is a real boolean, the timestamps are Dates.
 	protected readonly casts = {};
+
+	// `user.id` is a text primary key with no database default — Better Auth
+	// assigns it in application code, so this model must too.
+	protected override generateId() {
+		return randomId();
+	}
 
 	findByEmail(email: string) {
 		return this.first(eq(user.email, email));
