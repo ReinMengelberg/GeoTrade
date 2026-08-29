@@ -78,17 +78,13 @@ export abstract class Model<
 	}
 
 	async create(attributes: Pick<Insert<T>, F>): Promise<TRow> {
-		const values = this.only(attributes);
-		const id = this.generateId();
-
-		if (id !== undefined && values.id === undefined) values.id = id;
-
-		// `values` holds exactly the `fillable` keys plus a generated id, and
-		// `create`'s signature already types them. Drizzle cannot verify that for
-		// a still-generic `T`, so the assertion is contained to this boundary.
+		// `values` holds exactly the `fillable` keys, and `create`'s signature
+		// already types them. Drizzle cannot verify that for a still-generic `T`,
+		// so the assertion is contained to this boundary. The primary key is left
+		// out on purpose — every table defaults it to `gen_random_uuid()`.
 		const rows = await db
 			.insert(this.table)
-			.values(values as Insert<T>)
+			.values(this.only(attributes) as Insert<T>)
 			.returning();
 
 		return rows[0] as TRow;
@@ -110,15 +106,6 @@ export abstract class Model<
 		return rows.length > 0;
 	}
 
-	/**
-	 * Primary keys are generated in application code for tables whose `id` has no
-	 * database default — which is every Better Auth table. Override in a subclass
-	 * for those; leave it alone when the column has a default and the database
-	 * should assign the value.
-	 */
-	protected generateId(): string | undefined {
-		return undefined;
-	}
 
 	/**
 	 * Escape hatch. Joins, transactions, partial selects and aggregates are all
@@ -141,13 +128,3 @@ export abstract class Model<
 	}
 }
 
-/** Random 32-character id, matching the shape Better Auth generates. */
-export function randomId(length = 32): string {
-	const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-	const bytes = crypto.getRandomValues(new Uint8Array(length));
-	let id = '';
-
-	for (let i = 0; i < length; i++) id += alphabet[bytes[i] % alphabet.length];
-
-	return id;
-}

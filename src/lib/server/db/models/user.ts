@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { Model, randomId, type AssertTrue, type Equals, type Row } from '../model';
+import { Model, type AssertTrue, type Equals, type Row } from '../model';
 import { user } from '../schema/user';
 
 /**
@@ -38,12 +38,6 @@ class UserModel extends Model<typeof user, 'name' | 'email' | 'image', User> {
 	// `emailVerified` is deliberately absent: it is exactly the field an
 	// over-posted request body would want to set.
 	protected readonly fillable = ['name', 'email', 'image'] as const;
-
-	// `user.id` is a text primary key with no database default — Better Auth
-	// assigns it in application code, so this model must too.
-	protected override generateId() {
-		return randomId();
-	}
 
 	findByEmail(email: string) {
 		return this.first(eq(user.email, email));

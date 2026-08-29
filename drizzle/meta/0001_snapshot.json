@@ -1,6 +1,6 @@
 {
-  "id": "1dc567e7-ee5c-49c6-9e24-eeb7c95060ae",
-  "prevId": "9654e4b9-1ad2-4761-ba01-3aa8c7d9b722",
+  "id": "228fde70-ad05-4fc7-ac12-1dabaf21b76f",
+  "prevId": "41cdcf11-42c7-4d06-b415-4513933ef710",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -10,9 +10,10 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": true,
-          "notNull": true
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
         "name": {
           "name": "name",
@@ -76,9 +77,10 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": true,
-          "notNull": true
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
         "expires_at": {
           "name": "expires_at",
@@ -120,7 +122,7 @@
         },
         "user_id": {
           "name": "user_id",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         }
