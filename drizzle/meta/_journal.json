@@ -5,28 +5,28 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1787992407821,
+      "when": 1787993629378,
       "tag": "0000_create_user_table",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1787992408867,
+      "when": 1787993630409,
       "tag": "0001_create_session_table",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
-      "when": 1787992409892,
+      "when": 1787993631433,
       "tag": "0002_create_account_table",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
-      "when": 1787992410950,
+      "when": 1787993632447,
       "tag": "0003_create_verification_table",
       "breakpoints": true
     }
