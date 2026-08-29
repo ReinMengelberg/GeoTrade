@@ -39,10 +39,6 @@ class UserModel extends Model<typeof user, 'name' | 'email' | 'image', User> {
 	// over-posted request body would want to set.
 	protected readonly fillable = ['name', 'email', 'image'] as const;
 
-	// Empty because every column on `user` already arrives correctly typed from
-	// the schema — `email_verified` is a real boolean, the timestamps are Dates.
-	protected readonly casts = {};
-
 	// `user.id` is a text primary key with no database default — Better Auth
 	// assigns it in application code, so this model must too.
 	protected override generateId() {

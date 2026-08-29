@@ -3,13 +3,11 @@ import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { db } from './index';
 
 // An Eloquent-style base class: each entity gets one subclass that declares its
-// table, its mass-assignable columns (`fillable`) and any attribute casts.
+// table and its mass-assignable columns (`fillable`).
 //
 // Unlike Eloquent this is not Active Record — rows come back as plain objects
 // typed by the Drizzle schema, not as model instances. That keeps Drizzle's
 // inferred types intact, which is the main reason to use Drizzle at all.
-
-export type Cast = 'number' | 'string' | 'boolean' | 'date' | 'json';
 
 /** True only when X and Y are the same type, not merely assignable. */
 export type Equals<X, Y> =
@@ -38,16 +36,9 @@ export abstract class Model<
 	 */
 	protected abstract readonly fillable: readonly F[];
 
-	/**
-	 * Attribute casts applied on read. Drizzle already returns correct types for
-	 * most columns, so this is usually empty — it earns its keep on `numeric`,
-	 * which postgres-js hands back as a string: `{ price: 'number' }`.
-	 */
-	protected abstract readonly casts: Partial<Record<keyof TRow & string, Cast>>;
-
 	async all(): Promise<TRow[]> {
 		const rows = await db.select().from(this.table as PgTable);
-		return rows.map((row) => this.hydrate(row));
+		return rows as TRow[];
 	}
 
 	async find(id: Id<T>): Promise<TRow | null> {
@@ -57,7 +48,7 @@ export abstract class Model<
 			.where(eq(this.table.id, id))
 			.limit(1);
 
-		return rows.length ? this.hydrate(rows[0]) : null;
+		return rows.length ? (rows[0] as TRow) : null;
 	}
 
 	async where(condition: SQL): Promise<TRow[]> {
@@ -66,7 +57,7 @@ export abstract class Model<
 			.from(this.table as PgTable)
 			.where(condition);
 
-		return rows.map((row) => this.hydrate(row));
+		return rows as TRow[];
 	}
 
 	async first(condition: SQL): Promise<TRow | null> {
@@ -76,7 +67,7 @@ export abstract class Model<
 			.where(condition)
 			.limit(1);
 
-		return rows.length ? this.hydrate(rows[0]) : null;
+		return rows.length ? (rows[0] as TRow) : null;
 	}
 
 	async count(condition?: SQL): Promise<number> {
@@ -100,7 +91,7 @@ export abstract class Model<
 			.values(values as Insert<T>)
 			.returning();
 
-		return this.hydrate(rows[0]);
+		return rows[0] as TRow;
 	}
 
 	async update(id: Id<T>, attributes: Partial<Pick<Insert<T>, F>>): Promise<TRow | null> {
@@ -110,7 +101,7 @@ export abstract class Model<
 			.where(eq(this.table.id, id))
 			.returning();
 
-		return rows.length ? this.hydrate(rows[0]) : null;
+		return rows.length ? (rows[0] as TRow) : null;
 	}
 
 	async destroy(id: Id<T>): Promise<boolean> {
@@ -147,37 +138,6 @@ export abstract class Model<
 		}
 
 		return values;
-	}
-
-	/** Applies `casts` to a row coming out of the database. */
-	private hydrate(row: Record<string, unknown>): TRow {
-		const entries = Object.entries(this.casts) as [string, Cast][];
-		if (!entries.length) return row as TRow;
-
-		const hydrated = { ...row };
-
-		for (const [key, cast] of entries) {
-			if (hydrated[key] !== null && hydrated[key] !== undefined) {
-				hydrated[key] = applyCast(hydrated[key], cast);
-			}
-		}
-
-		return hydrated as TRow;
-	}
-}
-
-function applyCast(value: unknown, cast: Cast): unknown {
-	switch (cast) {
-		case 'number':
-			return typeof value === 'number' ? value : Number(value);
-		case 'string':
-			return typeof value === 'string' ? value : String(value);
-		case 'boolean':
-			return typeof value === 'boolean' ? value : value === 'true' || value === 1;
-		case 'date':
-			return value instanceof Date ? value : new Date(value as string | number);
-		case 'json':
-			return typeof value === 'string' ? JSON.parse(value) : value;
 	}
 }
 
