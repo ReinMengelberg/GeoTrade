@@ -11,12 +11,23 @@ import { db } from './index';
 
 export type Cast = 'number' | 'string' | 'boolean' | 'date' | 'json';
 
+/** True only when X and Y are the same type, not merely assignable. */
+export type Equals<X, Y> =
+	(<V>() => V extends X ? 1 : 2) extends <V>() => V extends Y ? 1 : 2 ? true : false;
+
+/** Compile error unless the argument is exactly `true`. */
+export type AssertTrue<T extends true> = T;
+
 type AnyTable = PgTable & { id: PgColumn };
-type Row<T extends AnyTable> = T['$inferSelect'];
+export type Row<T extends AnyTable> = T['$inferSelect'];
 type Insert<T extends AnyTable> = T['$inferInsert'];
 type Id<T extends AnyTable> = Row<T>['id'];
 
-export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & string> {
+export abstract class Model<
+	T extends AnyTable,
+	F extends keyof Insert<T> & string,
+	TRow extends Row<T> = Row<T>
+> {
 	/** The Drizzle table this model reads and writes. */
 	protected abstract readonly table: T;
 
@@ -32,14 +43,14 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 	 * most columns, so this is usually empty — it earns its keep on `numeric`,
 	 * which postgres-js hands back as a string: `{ price: 'number' }`.
 	 */
-	protected abstract readonly casts: Partial<Record<keyof Row<T> & string, Cast>>;
+	protected abstract readonly casts: Partial<Record<keyof TRow & string, Cast>>;
 
-	async all(): Promise<Row<T>[]> {
+	async all(): Promise<TRow[]> {
 		const rows = await db.select().from(this.table as PgTable);
 		return rows.map((row) => this.hydrate(row));
 	}
 
-	async find(id: Id<T>): Promise<Row<T> | null> {
+	async find(id: Id<T>): Promise<TRow | null> {
 		const rows = await db
 			.select()
 			.from(this.table as PgTable)
@@ -49,7 +60,7 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 		return rows.length ? this.hydrate(rows[0]) : null;
 	}
 
-	async where(condition: SQL): Promise<Row<T>[]> {
+	async where(condition: SQL): Promise<TRow[]> {
 		const rows = await db
 			.select()
 			.from(this.table as PgTable)
@@ -58,7 +69,7 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 		return rows.map((row) => this.hydrate(row));
 	}
 
-	async first(condition: SQL): Promise<Row<T> | null> {
+	async first(condition: SQL): Promise<TRow | null> {
 		const rows = await db
 			.select()
 			.from(this.table as PgTable)
@@ -75,7 +86,7 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 		return rows[0].value;
 	}
 
-	async create(attributes: Pick<Insert<T>, F>): Promise<Row<T>> {
+	async create(attributes: Pick<Insert<T>, F>): Promise<TRow> {
 		const values = this.only(attributes);
 		const id = this.generateId();
 
@@ -92,7 +103,7 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 		return this.hydrate(rows[0]);
 	}
 
-	async update(id: Id<T>, attributes: Partial<Pick<Insert<T>, F>>): Promise<Row<T> | null> {
+	async update(id: Id<T>, attributes: Partial<Pick<Insert<T>, F>>): Promise<TRow | null> {
 		const rows = await db
 			.update(this.table)
 			.set(this.only(attributes) as Insert<T>)
@@ -139,9 +150,9 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 	}
 
 	/** Applies `casts` to a row coming out of the database. */
-	private hydrate(row: Record<string, unknown>): Row<T> {
+	private hydrate(row: Record<string, unknown>): TRow {
 		const entries = Object.entries(this.casts) as [string, Cast][];
-		if (!entries.length) return row as Row<T>;
+		if (!entries.length) return row as TRow;
 
 		const hydrated = { ...row };
 
@@ -151,7 +162,7 @@ export abstract class Model<T extends AnyTable, F extends keyof Insert<T> & stri
 			}
 		}
 
-		return hydrated as Row<T>;
+		return hydrated as TRow;
 	}
 }
 
