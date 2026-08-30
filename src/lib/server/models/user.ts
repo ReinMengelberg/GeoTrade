@@ -42,6 +42,12 @@ class UserModel extends Model<typeof user, 'name' | 'email' | 'image', User> {
 	findByEmail(email: string) {
 		return this.first(eq(user.email, email));
 	}
+
+	// Self-service only for now — the `user` table has no `role` column yet, so
+	// there is no admin override to check. Extend this once one lands.
+	canAccess(requester: { id: string } | null, id: string): boolean {
+		return requester?.id === id;
+	}
 }
 
 export const User = new UserModel();
