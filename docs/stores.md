@@ -22,7 +22,7 @@ In four steps:
 3. Your browser takes over the same stores and keeps them for the rest of your visit.
 4. Components read from the stores and call their methods to change things.
 
-## Words used in this doc
+## Glossary
 
 - **SSR (server-side rendering)** — the server builds the finished HTML before sending
   it, so the first thing you see already has content in it.

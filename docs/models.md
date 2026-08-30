@@ -30,7 +30,7 @@ In four steps:
 3. A model declares which table it belongs to and which fields are writable from outside.
 4. API routes check who is asking, then call the model and return the rows as JSON.
 
-## Words used in this doc
+## Glossary
 
 - **Schema** — the description of a table's columns, written in TypeScript.
 - **Table / row / column** — a table is one kind of thing (users, trades); a row is one
