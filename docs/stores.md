@@ -4,6 +4,59 @@ How GeoTrade manages frontend state: a **context-seeded store pattern**, modeled
 Pinia does SSR in Vue. Server-rendered first paint, then SPA-style stores that own the
 data — without the cross-request leaks SvelteKit warns about.
 
+## TL;DR
+
+When you open a page, the server already puts the data you need inside the HTML it sends
+back — so you see real content instead of a loading spinner. That same data is handed to
+a small object in the browser (we call it a *store*), and from then on that object owns
+the data: the screen reads from it, and adding, editing or deleting goes through it. The
+server fills a store once, right at the start; after that the browser keeps it up to date
+by talking to the API itself. Every visitor gets their own fresh set of stores, so one
+person's data can never show up in someone else's page.
+
+In four steps:
+
+1. The server checks who you are and fetches your first batch of data.
+2. That batch is handed to the stores while the page is being built, so it lands in the
+   HTML you receive.
+3. Your browser takes over the same stores and keeps them for the rest of your visit.
+4. Components read from the stores and call their methods to change things.
+
+## Words used in this doc
+
+- **SSR (server-side rendering)** — the server builds the finished HTML before sending
+  it, so the first thing you see already has content in it.
+- **CSR (client-side rendering)** — the opposite: the server sends an empty shell and the
+  browser fetches the data and draws the page.
+- **Hydration** — the browser taking that ready-made HTML and wiring it up so it becomes
+  clickable and interactive.
+- **SPA (single-page app)** — after the first page load, the browser swaps content in
+  place instead of asking the server for a whole new page.
+- **Store** — an object that holds one slice of the app's data plus the functions that
+  change it.
+- **Seed / seeding** — the first batch of data handed to a store when it is created.
+- **`load` function** — a SvelteKit file that runs *before* a page is drawn and fetches
+  what that page needs. It runs on the server for the first visit, in the browser after.
+- **Context** — Svelte's way of handing a value from a parent component down to any child
+  without passing it through every layer in between. Each render gets its own copy.
+- **Module-level state / module scope** — a variable declared at the top of a file,
+  outside any function or class. On the server there is only one copy, shared by everyone.
+- **Singleton** — one shared instance of something, used everywhere in the app.
+- **Per-request** — created fresh for each visitor's page request, so nothing is shared
+  between visitors.
+- **Optimistic update** — updating what is on screen straight away from what the API
+  replied, instead of reloading everything from scratch.
+- **Invalidate / `invalidateAll()`** — telling SvelteKit "this data is stale, re-run the
+  load functions and fetch it again".
+- **Auth guard** — a check that runs before a page and sends you away if you are not
+  signed in.
+- **`$state` / `$effect`** — Svelte 5 markers: `$state` makes a variable reactive (the
+  screen updates when it changes), `$effect` runs code after a render, browser only.
+- **`locals`** — a per-request bag SvelteKit gives server code to stash things in, such
+  as the current user.
+- **Getter** — a property that works out its value each time you read it, instead of
+  keeping its own copy.
+
 ## The problem this solves
 
 Two facts about SvelteKit shape everything here:

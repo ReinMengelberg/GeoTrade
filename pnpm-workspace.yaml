@@ -1,4 +1,4 @@
 allowBuilds:
-  esbuild: false
+  esbuild: falsei wou
 onlyBuiltDependencies:
   - esbuild
