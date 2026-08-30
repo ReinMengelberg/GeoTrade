@@ -21,6 +21,13 @@ export const auth = betterAuth({
 	emailAndPassword: {
 		enabled: true
 	},
+	// Matches the `uuid` primary keys in the schema. Without this Better Auth
+	// generates its own 32-character ids, which are not valid UUIDs.
+	advanced: {
+		database: {
+			generateId: 'uuid'
+		}
+	},
 	// Lets Better Auth set cookies from load functions and form actions, not just
 	// from the /api/auth routes. Must stay last in the plugin list.
 	plugins: [sveltekitCookies(getRequestEvent)]
