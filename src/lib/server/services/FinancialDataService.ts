@@ -1,9 +1,4 @@
-// import { TIINGO_API_KEY } from '$env/static/private';
-
-export type AssetType =
-	'stock' |
-	'forex' |
-	'crypto';
+export type AssetType = 'stock' | 'forex' | 'crypto';
 
 export interface Asset {
 	symbol: string;
@@ -11,240 +6,336 @@ export interface Asset {
 }
 
 export interface PricePoint {
-	date: Date;
+	timestamp: Date;
 	price: number;
 }
 
-export interface AssetPrice extends PricePoint {
+export interface AssetPrice {
 	asset: Asset;
+	point: PricePoint;
 }
 
 export interface AssetPriceSeries {
 	asset: Asset;
-	priceSeries: PricePoint[];	
+	points: PricePoint[];
+}
+
+export interface Duration {
+	value: number;
+	unit: 'minute' | 'hour' | 'day';
 }
 
 export interface IPriceFetcher {
-	fetchAssetPrice(
-		assets?: Asset[]
-	): Promise<AssetPrice[]>;
-
-	fetchAssetPriceSeriesTotal(
-		asset: Asset
-	): Promise<AssetPriceSeries>;
-
-	fetchAssetPriceSeriesMinute(
-		asset: Asset,
-		startDate: Date
-	): Promise<AssetPriceSeries>;
-
-	fetchAssetPriceSeriesHour(
-		asset: Asset,
-		startDate: Date
-	): Promise<AssetPriceSeries>;
+	fetchLivePrices(assets: Asset[]): Promise<AssetPrice[]>;
+	fetchDailySeries(asset: Asset, startTime: Date, endTime?: Date): Promise<AssetPriceSeries>;
+	fetchPriceSeries(asset: Asset, startTime: Date, interval: Duration, period: Duration): Promise<AssetPriceSeries>;
 }
 
-interface TiingoQuote {
+type TiingoBar = {
+	date: string;
+	close: number;
+};
+
+type TiingoStockQuote = {
 	ticker: string;
-	timestamp?: string;
-	quoteTimestamp?: string;
-	lastSaleTimeStamp?: string;
-	date?: string;
-	last?: number;
-	tngoLast?: number;
-	close?: number;
-	midPrice?: number;
-	bidPrice?: number;
-	priceData?: Array<{
-		date?: string;
-		timestamp?: string;
-		close: number
-	}>;
+	timestamp: string;
+	tngoLast: number | null;
+	last: number | null;
+};
+
+type TiingoForexQuote = {
+	ticker: string;
+	quoteTimestamp: string;
+	midPrice: number | null;
+};
+
+type TiingoCryptoPrice = {
+	ticker: string;
+	priceData: TiingoBar | TiingoBar[];
+};
+
+type RequestSpec = { path: string; params?: Record<string, string> };
+
+function assertNever(value: never): never {
+	throw new Error(`Unhandled asset type: ${JSON.stringify(value)}`);
 }
 
 export class PriceFetcher implements IPriceFetcher {
-	private readonly apiKey: string;
+	private static readonly MAX_URL_LENGTH = 8000;
+	private static readonly ASSET_TYPES: readonly AssetType[] = ['stock', 'forex', 'crypto'];
 	private readonly baseUrl = 'https://api.tiingo.com';
-	private readonly maxUrlLength = 2048;
-	private readonly maxCryptoTickers = 5;
-	private readonly rateLimitDelayMs = 250;
+	private readonly token: string;
 
-	constructor(apiKey?: string) {
-		this.apiKey = apiKey || process.env.TIINGO_API_KEY || '';
-		if (!this.apiKey) {
-			throw new Error('Tiingo API key missing. Pass to constructor or set TIINGO_API_KEY.');
-		}
+	constructor(token: string) {
+		if (!token) throw new Error('Tiingo API token is missing');
+		this.token = token;
 	}
 
-	private async httpGet<T>(path: string): Promise<T> {
-		const url = new URL(path, this.baseUrl).toString();
-		
-		const response = await fetch(url, {
-			headers: {
-				'Content-Type': 'application/json',
-				'Authorization': `Token ${this.apiKey}`
-			}
-		});
+	async fetchLivePrices(assets: Asset[]): Promise<AssetPrice[]> {
+		if (assets.length === 0) return [];
+		for (const asset of assets) this.validateAsset(asset);
 
-		if (!response.ok) {
-			throw new Error(`Tiingo API error (${response.status}): ${response.statusText}`);
-		}
-
-		return response.json() as Promise<T>;
+		const [stocks, forex, crypto] = await Promise.all([
+			this.fetchLiveStocks(assets.filter((a) => a.type === 'stock')),
+			this.fetchLiveForex(assets.filter((a) => a.type === 'forex')),
+			this.fetchLiveCrypto(assets.filter((a) => a.type === 'crypto'))
+		]);
+		return [...stocks, ...forex, ...crypto];
 	}
 
-	private formatDate(date: Date): string {
-		return date.toISOString().split('T')[0];
-	}
-
-	private delay(ms: number): Promise<void> {
-		return new Promise((resolve) => setTimeout(resolve, ms));
-	}
-
-	private parseDate(rawDate?: string | null): Date {
-		if (!rawDate) return new Date();
-		const parsed = new Date(rawDate);
-		return isNaN(parsed.getTime()) ? new Date() : parsed;
-	}
-
-	private buildUrlPaths(basePath: string, symbols: string[], maxCount = Infinity): string[] {
-		if (symbols.length === 0) return [];
-
-		const paths: string[] = [];
-		let currentChunk: string[] = [];
-		let currentLen = 0;
-		
-		const delimiter = basePath.includes('?') ? '&' : '?';
-		const prefixLen = this.baseUrl.length + basePath.length + delimiter.length + 8;
-
-		for (const symbol of symbols) {
-			const addedLen = currentChunk.length === 0 ? symbol.length : symbol.length + 1;
-
-			if (currentChunk.length >= maxCount || prefixLen + currentLen + addedLen > this.maxUrlLength) {
-				paths.push(`${basePath}${delimiter}tickers=${currentChunk.join(',')}`);
-				currentChunk = [symbol];
-				currentLen = symbol.length;
-			} else {
-				currentChunk.push(symbol);
-				currentLen += addedLen;
-			}
+	async fetchDailySeries(asset: Asset, startTime: Date, endTime?: Date): Promise<AssetPriceSeries> {
+		this.validateAsset(asset);
+		this.validateDate(startTime);
+		if (endTime !== undefined) {
+			this.validateDate(endTime);
+			if (endTime <= startTime) throw new Error('End time must be after start time');
 		}
 
-		if (currentChunk.length > 0) {
-			paths.push(`${basePath}${delimiter}tickers=${currentChunk.join(',')}`);
-		}
+		const bars = await this.fetchDailyBars(asset, startTime, endTime);
+		const points = this.toPricePoints(bars)
+			.filter((point) => point.timestamp >= startTime && (endTime === undefined || point.timestamp < endTime))
+			.sort(this.comparePoints);
 
-		return paths;
+		return { asset, points };
 	}
 
-	async fetchAssetPrice(assets: Asset[] = []): Promise<AssetPrice[]> {
-		if (!assets.length) return [];
+	async fetchPriceSeries(asset: Asset, startTime: Date, interval: Duration, period: Duration): Promise<AssetPriceSeries> {
+		this.validateAsset(asset);
+		this.validateDate(startTime);
+		this.validateDuration(interval);
+		this.validateDuration(period);
+		if (interval.unit === 'day') throw new Error('Use fetchDailySeries() for daily prices');
 
-		const assetMap = new Map<string, Asset>(
-			assets.map(a => [`${a.type}:${a.symbol.toLowerCase()}`, a])
-		);
+		const intervalMs = this.durationToMilliseconds(interval);
+		const periodMs = this.durationToMilliseconds(period);
+		if (periodMs < intervalMs) throw new Error('Period must be at least as long as interval');
 
-		const requests = [
-			...this.buildUrlPaths('/iex/', assets.filter(a => a.type === 'stock').map(a => a.symbol))
-				.map(path => ({ path, type: 'stock' as AssetType })),
-			...this.buildUrlPaths('/tiingo/fx/top', assets.filter(a => a.type === 'forex').map(a => a.symbol))
-				.map(path => ({ path, type: 'forex' as AssetType })),
-			...this.buildUrlPaths('/tiingo/crypto/prices', assets.filter(a => a.type === 'crypto').map(a => a.symbol.toLowerCase()), this.maxCryptoTickers)
-				.map(path => ({ path, type: 'crypto' as AssetType }))
-		];
+		const endTime = new Date(startTime.getTime() + periodMs);
+		const lookbackStart = this.getLookbackStart(startTime, intervalMs);
+		const bars = await this.fetchIntradayBars(asset, lookbackStart, endTime, interval);
+		const points = this.toPricePoints(bars).sort(this.comparePoints);
 
-		const results: AssetPrice[] = [];
-
-		for (let i = 0; i < requests.length; i++) {
-			if (i > 0) await this.delay(this.rateLimitDelayMs);
-			const rawData = await this.httpGet<TiingoQuote[]>(requests[i].path);
-			results.push(...this.parseLiveResponse(rawData, requests[i].type, assetMap));
-		}
-
-		return results;
-	}
-
-	private parseLiveResponse(raw: TiingoQuote[], type: AssetType, assetMap: Map<string, Asset>): AssetPrice[] {
-		if (!Array.isArray(raw)) return [];
-
-		return raw.flatMap(item => {
-			const key = `${type}:${item.ticker.toLowerCase()}`;
-			const asset = assetMap.get(key) ?? { symbol: item.ticker, type };
-
-			if (type === 'crypto') {
-				const latest = item.priceData?.[0];
-				if (!latest) return [];
-				return [{
-					asset,
-					price: latest.close,
-					date: this.parseDate(latest.date ?? latest.timestamp ?? item.timestamp)
-				}];
-			}
-
-			const price = item.last ?? item.tngoLast ?? item.close ?? item.midPrice ?? item.bidPrice;
-			const rawDate = item.timestamp ?? item.quoteTimestamp ?? item.lastSaleTimeStamp ?? item.date;
-
-			if (price === undefined) return [];
-
-			return [{
-				asset,
-				price,
-				date: this.parseDate(rawDate)
-			}];
-		});
-	}
-
-	async fetchAssetPriceSeriesTotal(asset: Asset): Promise<AssetPriceSeries> {
-		return this.fetchIntervalPrices(asset, '1900-01-01', undefined, '1day');
-	}
-
-	async fetchAssetPriceSeriesMinute(asset: Asset, startDate: Date): Promise<AssetPriceSeries> {
-		const endDate = new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-		return this.fetchIntervalPrices(asset, this.formatDate(startDate), this.formatDate(endDate), '10min');
-	}
-
-	async fetchAssetPriceSeriesHour(asset: Asset, startDate: Date): Promise<AssetPriceSeries> {
-		const endDate = new Date(startDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-		return this.fetchIntervalPrices(asset, this.formatDate(startDate), this.formatDate(endDate), '1hour');
-	}
-
-	private async fetchIntervalPrices(asset: Asset, startStr: string, endStr?: string, freq = '1day'): Promise<AssetPriceSeries> {
-		// Using URLSearchParams elegantly handles ? and & combinations
-		const params = new URLSearchParams({ startDate: startStr });
-		if (endStr) params.append('endDate', endStr);
-		if (freq !== '1day') params.append('resampleFreq', freq);
-
-		let basePath = '';
-		if (asset.type === 'stock') {
-			basePath = freq === '1day' ? `/tiingo/daily/${asset.symbol}/prices` : `/iex/${asset.symbol}/prices`;
-		} else if (asset.type === 'forex') {
-			basePath = `/tiingo/fx/${asset.symbol}/prices`;
-		} else if (asset.type === 'crypto') {
-			basePath = `/tiingo/crypto/prices`;
-			params.append('tickers', asset.symbol.toLowerCase());
-		}
-
-		const rawData = await this.httpGet<TiingoQuote[]>(`${basePath}?${params.toString()}`);
-		
 		return {
 			asset,
-			priceSeries: this.parseHistoryData(rawData, asset.type)
+			points: this.buildPriceSeries(asset, points, startTime, endTime, intervalMs)
 		};
 	}
 
-	private parseHistoryData(rawData: TiingoQuote[], type: AssetType): PricePoint[] {
-		if (!Array.isArray(rawData) || rawData.length === 0) return [];
+	private fetchLiveStocks(assets: Asset[]): Promise<AssetPrice[]> {
+		return this.fetchBatchedLive(
+			assets,
+			(symbols) => ({ path: `/iex/${symbols.map(encodeURIComponent).join(',')}` }),
+			async (batch) => {
+				const quotes = await this.httpGet<TiingoStockQuote[]>(batch.path, batch.params);
+				return quotes.flatMap((quote) => {
+					const asset = this.findAsset(batch.assets, quote.ticker);
+					const price = quote.tngoLast ?? quote.last;
+					if (!asset || price == null) return [];
+					return [{ asset, point: { timestamp: new Date(quote.timestamp), price } }];
+				});
+			}
+		);
+	}
 
-		if (type === 'crypto' && rawData[0]?.priceData) {
-			return rawData[0].priceData.map(p => ({
-				date: this.parseDate(p.date ?? p.timestamp),
-				price: p.close
-			}));
+	private fetchLiveForex(assets: Asset[]): Promise<AssetPrice[]> {
+		return this.fetchBatchedLive(
+			assets,
+			(symbols) => ({ path: '/tiingo/fx/top', params: { tickers: symbols.join(',') } }),
+			async (batch) => {
+				const quotes = await this.httpGet<TiingoForexQuote[]>(batch.path, batch.params);
+				return quotes.flatMap((quote) => {
+					const asset = this.findAsset(batch.assets, quote.ticker);
+					if (!asset || quote.midPrice == null) return [];
+					return [{ asset, point: { timestamp: new Date(quote.quoteTimestamp), price: quote.midPrice } }];
+				});
+			}
+		);
+	}
+
+	private fetchLiveCrypto(assets: Asset[]): Promise<AssetPrice[]> {
+		return this.fetchBatchedLive(
+			assets,
+			(symbols) => ({ path: '/tiingo/crypto/prices', params: { tickers: symbols.join(',') } }),
+			async (batch) => {
+				const quotes = await this.httpGet<TiingoCryptoPrice[]>(batch.path, batch.params);
+				return quotes.flatMap((quote) => {
+					const asset = this.findAsset(batch.assets, quote.ticker);
+					if (!asset) return [];
+					const priceData = Array.isArray(quote.priceData) ? quote.priceData[quote.priceData.length - 1] : quote.priceData;
+					if (!priceData) return [];
+					return [{ asset, point: { timestamp: new Date(priceData.date), price: priceData.close } }];
+				});
+			}
+		);
+	}
+
+	private async fetchBatchedLive(
+		assets: Asset[],
+		buildRequest: (symbols: string[]) => RequestSpec,
+		parseBatch: (batch: { assets: Asset[] } & RequestSpec) => Promise<AssetPrice[]>
+	): Promise<AssetPrice[]> {
+		if (assets.length === 0) return [];
+		const batches = this.splitAssetBatches(assets, buildRequest);
+		const results = await Promise.all(batches.map(parseBatch));
+		return results.flat();
+	}
+
+	private splitAssetBatches(assets: Asset[], buildRequest: (symbols: string[]) => RequestSpec): Array<{ assets: Asset[] } & RequestSpec> {
+		const result: Array<{ assets: Asset[] } & RequestSpec> = [];
+		let current: Asset[] = [];
+
+		const requestLength = (batchAssets: Asset[]): number => {
+			const { path, params } = buildRequest(batchAssets.map((a) => a.symbol));
+			return this.buildUrl(path, params).length;
+		};
+
+		for (const asset of assets) {
+			if (current.length === 0 && requestLength([asset]) > PriceFetcher.MAX_URL_LENGTH) {
+				throw new Error(`Asset symbol is too long for an HTTP request: ${asset.symbol}`);
+			}
+			if (current.length > 0 && requestLength([...current, asset]) > PriceFetcher.MAX_URL_LENGTH) {
+				result.push({ assets: current, ...buildRequest(current.map((a) => a.symbol)) });
+				current = [];
+			}
+			current.push(asset);
 		}
+		if (current.length > 0) result.push({ assets: current, ...buildRequest(current.map((a) => a.symbol)) });
+		return result;
+	}
 
-		return rawData.map(p => ({
-			date: this.parseDate(p.date ?? p.timestamp),
-			price: p.close ?? p.midPrice ?? 0
-		}));
+	private async fetchDailyBars(asset: Asset, startTime: Date, endTime?: Date): Promise<TiingoBar[]> {
+		const params: Record<string, string> = { startDate: startTime.toISOString() };
+		if (endTime) params.endDate = endTime.toISOString();
+
+		switch (asset.type) {
+			case 'stock':
+				return this.httpGet<TiingoBar[]>(`/tiingo/daily/${encodeURIComponent(asset.symbol)}/prices`, params);
+			case 'forex':
+				return this.httpGet<TiingoBar[]>(`/tiingo/fx/${encodeURIComponent(asset.symbol)}/prices`, { ...params, resampleFreq: '1day' });
+			case 'crypto': {
+				const response = await this.httpGet<TiingoCryptoPrice[]>('/tiingo/crypto/prices', { ...params, tickers: asset.symbol, resampleFreq: '1day' });
+				const data = response[0]?.priceData;
+				return Array.isArray(data) ? data : data ? [data] : [];
+			}
+			default:
+				return assertNever(asset.type);
+		}
+	}
+
+	private toDateOnly(date: Date): string {
+		return date.toISOString().slice(0, 10); // "YYYY-MM-DD"
+	}
+
+	private async fetchIntradayBars(asset: Asset, startTime: Date, endTime: Date, interval: Duration): Promise<TiingoBar[]> {
+		const params = {
+			startDate: startTime.toISOString(),
+			endDate: endTime.toISOString(),
+			resampleFreq: this.durationToTiingoFrequency(interval)
+		};
+
+		switch (asset.type) {
+			case 'stock':
+				return this.httpGet<TiingoBar[]>(`/iex/${encodeURIComponent(asset.symbol)}/prices`, {
+					...params,
+					startDate: this.toDateOnly(startTime),   // IEX rejects timestamps, only accepts dates
+					endDate: this.toDateOnly(endTime)
+				});
+			case 'forex':
+				return this.httpGet<TiingoBar[]>(`/tiingo/fx/${encodeURIComponent(asset.symbol)}/prices`, params);
+			case 'crypto': {
+				const response = await this.httpGet<TiingoCryptoPrice[]>('/tiingo/crypto/prices', { ...params, tickers: asset.symbol });
+				const data = response[0]?.priceData;
+				return Array.isArray(data) ? data : data ? [data] : [];
+			}
+			default:
+				return assertNever(asset.type);
+		}
+	}
+
+	private buildPriceSeries(asset: Asset, points: PricePoint[], startTime: Date, endTime: Date, intervalMs: number): PricePoint[] {
+		const result: PricePoint[] = [];
+		let index = 0;
+		let lastPrice: number | undefined;
+
+		for (let time = startTime.getTime(); time < endTime.getTime(); time += intervalMs) {
+			while (index < points.length && points[index].timestamp.getTime() <= time) {
+				lastPrice = points[index].price;
+				index++;
+			}
+			if (lastPrice === undefined) {
+				throw new Error(`No price available at or before ${new Date(time).toISOString()} for ${asset.type} ${asset.symbol}`);
+			}
+			result.push({ timestamp: new Date(time), price: lastPrice });
+		}
+		return result;
+	}
+
+	private getLookbackStart(startTime: Date, intervalMs: number): Date {
+		return new Date(startTime.getTime() - intervalMs);
+	}
+
+	private toPricePoints(bars: TiingoBar[]): PricePoint[] {
+		return bars.flatMap((bar) => {
+			const timestamp = new Date(bar.date);
+			if (Number.isNaN(timestamp.getTime()) || !Number.isFinite(bar.close)) return [];
+			return [{ timestamp, price: bar.close }];
+		});
+	}
+
+	private findAsset(assets: Asset[], symbol: string): Asset | undefined {
+		const normalized = symbol.toUpperCase();
+		return assets.find((asset) => asset.symbol.toUpperCase() === normalized);
+	}
+
+	private validateAsset(asset: Asset): void {
+		if (!asset.symbol.trim()) throw new Error('Asset symbol is missing');
+		if (!PriceFetcher.ASSET_TYPES.includes(asset.type)) {
+			throw new Error(`Unknown asset type: ${asset.type}`);
+		}
+	}
+
+	private validateDate(date: Date): void {
+		if (Number.isNaN(date.getTime())) throw new Error('Invalid date');
+	}
+
+	private validateDuration(duration: Duration): void {
+		if (!Number.isInteger(duration.value) || duration.value <= 0) {
+			throw new Error('Duration value must be a positive integer');
+		}
+	}
+
+	private durationToMilliseconds(duration: Duration): number {
+		const factors = { minute: 60_000, hour: 3_600_000, day: 86_400_000 };
+		return duration.value * factors[duration.unit];
+	}
+
+	private durationToTiingoFrequency(duration: Duration): string {
+		const suffixes = { minute: 'min', hour: 'hour', day: 'day' };
+		return `${duration.value}${suffixes[duration.unit]}`;
+	}
+
+	private buildUrl(path: string, params?: Record<string, string>): string {
+		const url = new URL(path, this.baseUrl);
+		if (params) {
+			for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+		}
+		return url.toString();
+	}
+
+	private async httpGet<T>(path: string, params?: Record<string, string>): Promise<T> {
+		const url = this.buildUrl(path, params);
+		const response = await fetch(url, {
+			method: 'GET',
+			headers: { Authorization: `Token ${this.token}`, Accept: 'application/json' }
+		});
+		if (!response.ok) {
+			const body = await response.text();
+			throw new Error(`Tiingo API error ${response.status}: ${body}`);
+		}
+		return response.json() as Promise<T>;
+	}
+
+	private comparePoints(a: PricePoint, b: PricePoint): number {
+		return a.timestamp.getTime() - b.timestamp.getTime();
 	}
 }

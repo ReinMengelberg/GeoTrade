@@ -1,0 +1,5 @@
+operation,type,symbol,startTime,endTime,intervalValue,intervalUnit,periodValue,periodUnit
+daily,stock,AAPL,2026-09-01,2026-09-09,,,,
+series,stock,AAPL,2026-09-01T14:30:00Z,,30,minute,3,hour
+series,forex,eurusd,2026-09-01T12:00:00Z,,1,hour,6,hour
+series,crypto,btcusd,2026-09-01T12:00:00Z,,30,minute,3,hour
