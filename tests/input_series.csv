@@ -1,0 +1,4 @@
+symbol,type,start_time,interval_value,interval_unit,period_value,period_unit
+LMT,stock,2026-09-08T12:00:00Z,10,min,1,hour
+EURUSD,forex,2026-09-08T12:00:00Z,10,min,1,hour
+BTCUSD,crypto,2026-09-08T12:00:00Z,10,min,1,hour
