@@ -1,8 +1,190 @@
-symbol,type
-BTCUSD,crypto
-ETHUSD,crypto
-SOLUSD,crypto
-XRPUSD,crypto
-BNBUSD,crypto
-LMT,stock
-EURUSD,forex
+# symbol,type,expect
+#
+# expect = required | optional
+#   required: the test fails if no tick arrives (gated by market hours).
+#   optional: the symbol is reported but never asserted. Use this for symbols
+#             the provider may not cover, may cover under a different name,
+#             or that trade too rarely to observe in a 15s window.
+#
+# If BRENT/WTI/NGAS/COPPER/ALUMINUM/NICKEL/WHEAT/CORN/SOYBEAN never tick,
+# BiQuote's MT5 feed may spell them differently. Alternates to try (add as
+# additional `optional` rows, then promote to `required` once one ticks):
+#   BRENT    -> UKOIL, XBRUSD, BRN
+#   WTI      -> USOIL, XTIUSD, CL
+#   NGAS     -> XNGUSD, NATGAS
+#   COPPER   -> XCUUSD, HG
+#   ALUMINUM -> XALUSD, ALI
+#   NICKEL   -> XNIUSD, NI
+#   WHEAT    -> ZW
+#   CORN     -> ZC
+#   SOYBEAN  -> ZS
+symbol,type,expect
+# --- US equities and ETFs ---
+TSM,us,required
+LMT,us,required
+RTX,us,required
+NOC,us,required
+GD,us,required
+LHX,us,required
+HII,us,required
+AXON,us,required
+KTOS,us,required
+NVDA,us,required
+AAPL,us,required
+QCOM,us,required
+AMAT,us,required
+LRCX,us,required
+MU,us,required
+INTC,us,required
+AVGO,us,required
+BA,us,required
+XOM,us,required
+CVX,us,required
+OXY,us,required
+COP,us,required
+SLB,us,required
+HAL,us,required
+BKR,us,required
+EQT,us,required
+LNG,us,required
+FCX,us,required
+CCJ,us,required
+MP,us,required
+ALB,us,required
+SQM,us,required
+ZIM,us,required
+FRO,us,required
+STNG,us,required
+MATX,us,required
+BG,us,required
+ADM,us,required
+CF,us,required
+MOS,us,required
+NTR,us,required
+PLTR,us,required
+CRWD,us,required
+PANW,us,required
+FTNT,us,required
+EWT,us,required
+XLE,us,required
+CIBR,us,required
+ITA,us,required
+XME,us,required
+# --- US ETFs added to exceed the 50-symbol Finnhub ceiling ---
+SPY,us,required
+QQQ,us,required
+DIA,us,required
+IWM,us,required
+GLD,us,required
+SLV,us,required
+TLT,us,required
+USO,us,required
+UNG,us,required
+PPA,us,required
+EIS,us,required
+KWEB,us,required
+FXI,us,required
+EEM,us,required
+INDA,us,required
+EWJ,us,required
+EWY,us,required
+# --- Global equities and ETFs (Yahoo; coverage varies by exchange) ---
+ASML.AS,global,optional
+2222.SR,global,optional
+RHM.DE,global,optional
+BA.L,global,optional
+AIR.PA,global,optional
+SAF.PA,global,optional
+LDO.MI,global,optional
+HO.PA,global,optional
+HAG.DE,global,optional
+SAAB-B.ST,global,optional
+R3NK.DE,global,optional
+SHEL.L,global,optional
+TTE.PA,global,optional
+BP.L,global,optional
+EQNR.OL,global,optional
+ENI.MI,global,optional
+RIO.L,global,optional
+GLEN.L,global,optional
+NHY.OL,global,optional
+005930.KS,global,optional
+000660.KS,global,optional
+2454.TW,global,optional
+6857.T,global,optional
+8035.T,global,optional
+7011.T,global,optional
+7012.T,global,optional
+7013.T,global,optional
+012450.KS,global,optional
+064350.KS,global,optional
+047810.KS,global,optional
+PETR4.SA,global,optional
+VALE3.SA,global,optional
+300750.SZ,global,optional
+1211.HK,global,optional
+0857.HK,global,optional
+0386.HK,global,optional
+0941.HK,global,optional
+9988.HK,global,optional
+0700.HK,global,optional
+TUR,global,optional
+BA.AX,global,optional
+WDS.AX,global,optional
+F34.SI,global,optional
+SOL.JO,global,optional
+ECOPETROL.CB,global,optional
+# --- Forex, precious metals, and commodity CFDs (BiQuote) ---
+XAUUSD,forex,required
+XAGUSD,forex,required
+XPTUSD,forex,required
+XPDUSD,forex,required
+EURUSD,forex,required
+USDJPY,forex,required
+GBPUSD,forex,required
+USDCHF,forex,required
+AUDUSD,forex,required
+USDCAD,forex,required
+NZDUSD,forex,required
+BRENT,forex,optional
+WTI,forex,optional
+NGAS,forex,optional
+COPPER,forex,optional
+WHEAT,forex,optional
+CORN,forex,optional
+SOYBEAN,forex,optional
+ALUMINUM,forex,optional
+NICKEL,forex,optional
+USDCNH,forex,optional
+USDILS,forex,optional
+USDRUB,forex,optional
+USDTRY,forex,optional
+USDKRW,forex,optional
+USDTWD,forex,optional
+USDPLN,forex,optional
+USDUAH,forex,optional
+USDZAR,forex,optional
+USDBRL,forex,optional
+USDMXN,forex,optional
+USDEGP,forex,optional
+# --- Crypto (Binance) ---
+BTCUSDT,crypto,required
+ETHUSDT,crypto,required
+SOLUSDT,crypto,required
+BNBUSDT,crypto,required
+XRPUSDT,crypto,required
+ADAUSDT,crypto,required
+AVAXUSDT,crypto,required
+LINKUSDT,crypto,required
+DOTUSDT,crypto,required
+TRXUSDT,crypto,required
+TONUSDT,crypto,required
+NEARUSDT,crypto,required
+SUIUSDT,crypto,required
+APTUSDT,crypto,required
+ZECUSDT,crypto,required
+UNIUSDT,crypto,required
+AAVEUSDT,crypto,required
+USDTUSDC,crypto,optional
+FDUSDUSDT,crypto,optional
+XMRUSDT,crypto,optional

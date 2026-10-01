@@ -1,9 +1,13 @@
-export type AssetType = 'stock' | 'forex' | 'crypto';
+import { EventEmitter } from 'node:events';
+import { assetKey, createFeed } from './FeedService';
+import type { Asset, AssetType, FeedProvider, IFeed } from './FeedService';
+import type { WsStatus } from './WebSocketService';
 
-export interface Asset {
-	symbol: string;
-	type: AssetType;
-}
+export type { Asset, AssetType, WsStatus };
+
+// ============================================================================
+// Types
+// ============================================================================
 
 export interface PricePoint {
 	timestamp: Date;
@@ -13,253 +17,174 @@ export interface PricePoint {
 export interface AssetPrice {
 	asset: Asset;
 	point: PricePoint;
+	/** Milliseconds since this price was received locally (not the market age). */
+	ageMs: number;
 }
-
-export interface AssetPriceSeries {
-	asset: Asset;
-	points: PricePoint[];
-}
-
-export interface Duration {
-	value: number;
-	unit: 'min' | 'hour' | 'day';
-}
-
-type Bar = {
-	date: string;
-	close: number;
-};
-
-type StockQuote = {
-	ticker: string;
-	timestamp: string;
-	tngoLast: number | null;
-	last: number | null;
-};
-
-type ForexQuote = {
-	ticker: string;
-	quoteTimestamp: string;
-	midPrice: number | null;
-};
-
-type CryptoQuote = {
-	ticker: string;
-	priceData?: Bar[];
-};
-
-const MINUTE_MS = 60_000;
-const HOUR_MS = 3_600_000;
-const DAY_MS = 86_400_000;
 
 export interface IPriceFetcher {
-	fetchLivePrices(assets: Asset[]): Promise<AssetPrice[]>;
-	fetchDailySeries(asset: Asset, startTime: Date, endTime?: Date): Promise<AssetPriceSeries>;
-	fetchPriceSeries(asset: Asset, startTime: Date, interval: Duration, period: Duration): Promise<AssetPriceSeries>;
+	subscribe(assets: Asset[]): Promise<void>;
+	unsubscribe(assets: Asset[]): Promise<void>;
+	stop(): Promise<void>;
+	snapshot(filter?: Asset[]): AssetPrice[];
+	on(event: 'price', listener: (price: AssetPrice) => void): this;
+	on(event: 'feedStatus', listener: (provider: AssetType, status: WsStatus) => void): this;
+	on(event: 'feedError', listener: (provider: AssetType, error: Error) => void): this;
 }
 
-export class PriceFetcher implements IPriceFetcher {
-	private static readonly LOOKBACK_DAYS_MS = [
-		1 * DAY_MS,
-		2 * DAY_MS,
-		3 * DAY_MS,
-		4 * DAY_MS,
-		10 * DAY_MS,
-		11 * DAY_MS
-	];
+interface CacheEntry {
+	asset: Asset;
+	point: PricePoint;
+	receivedAt: number;
+}
 
-	private readonly baseUrl = 'https://api.tiingo.com';
-	private readonly token: string;
+interface Route {
+	key: string;
+	type: AssetType;
+	provider: FeedProvider;
+}
 
-	constructor(token: string) {
-		if (!token)
-			throw new Error('Tiingo API token is missing');
-		this.token = token;
+const makeRoute = (type: AssetType, provider: FeedProvider = 'primary'): Route => ({
+	key: provider === 'primary' ? type : `${type}:${provider}`,
+	type,
+	provider
+});
+
+// ============================================================================
+// PriceFetcher
+// ============================================================================
+
+/**
+ * Routes assets to one feed per asset type and keeps the latest price of each.
+ * "us" assets go to Finnhub until its symbol limit is reached; the rest go to Yahoo.
+ *
+ * Events:
+ *   'price'      (AssetPrice)               every tick
+ *   'feedStatus' (type, status)             note: both "us" feeds report as 'us'
+ *   'feedError'  (type, error)
+ */
+export class PriceFetcher extends EventEmitter implements IPriceFetcher {
+	private static readonly FINNHUB_MAX_SYMBOLS = 50;
+
+	private readonly feeds = new Map<string, IFeed>();
+	private readonly routes = new Map<string, Route>();
+	private readonly cache = new Map<string, CacheEntry>();
+
+	constructor(private readonly finnhubApiKey: string) {
+		super();
 	}
 
-	async fetchLivePrices(assets: Asset[]): Promise<AssetPrice[]> {
-		const stocks = assets.filter(asset => asset.type === 'stock');
-		const forex = assets.filter(asset => asset.type === 'forex');
-		const crypto = assets.filter(asset => asset.type === 'crypto');
-		const [stockPrices, forexPrices, cryptoPrices] = await Promise.all([
-			this.fetchLiveStocks(stocks),
-			this.fetchLiveForex(forex),
-			this.fetchLiveCrypto(crypto)
-		]);
-		return [...stockPrices, ...forexPrices, ...cryptoPrices];
-	}
+	// --------------------------------------------------------------------------
+	// Public API
+	// --------------------------------------------------------------------------
 
-	async fetchDailySeries(asset: Asset, startTime: Date, endTime?: Date): Promise<AssetPriceSeries> {
-		const params = this.createParams(asset, startTime, endTime, '1day');
-		const points = await this.fetchBars(asset, params);
-		return {asset, points};
-	}
-
-	async fetchPriceSeries(asset: Asset, startTime: Date, interval: Duration, period: Duration): Promise<AssetPriceSeries> {
-		const startMs = startTime.getTime();
-		const endMs = startMs + this.toMs(period);
-		for (const lookbackMs of PriceFetcher.LOOKBACK_DAYS_MS) {
-			const params = this.createParams(asset, new Date(startMs - lookbackMs), new Date(endMs), `${interval.value}${interval.unit}`);
-			const points = await this.fetchBars(asset, params);
-			if (!points.length)
-				continue;
-			if (points[0].timestamp.getTime() > startMs)
-				continue;
-			return {asset, points: this.createPriceSeries(points, startMs, endMs, this.toMs(interval))};
+	async subscribe(assets: Asset[]): Promise<void> {
+		if (!this.finnhubApiKey && assets.some((a) => a.type === 'us')) {
+			throw new Error('FINNHUB_API_KEY required for "us" assets');
 		}
-		throw new Error(`No price available for ${asset.symbol} at ${startTime.toISOString()}`);
+
+		const groups = PriceFetcher.groupByRoute(assets, (asset) => this.assign(asset));
+		const results = await Promise.allSettled(
+			[...groups.values()].map(({ route, assets }) => this.getFeed(route).subscribe(assets))
+		);
+
+		const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+		if (failures.length > 0 && failures.length === results.length) throw failures[0].reason;
 	}
 
-	private async fetchLiveStocks(assets: Asset[]): Promise<AssetPrice[]> {
-		if (!assets.length)
-			return [];
-		const symbols = assets.map(asset => encodeURIComponent(asset.symbol)).join(',');
-		const quotes = await this.httpGet<StockQuote[]>(`/iex/${symbols}`);
-		const prices: AssetPrice[] = [];
-		for (const quote of quotes) {
-			const asset = assets.find(asset => asset.symbol.toLowerCase() === quote.ticker.toLowerCase());
-			if (!asset)
-				continue;
-			let price = quote.tngoLast;
-			if (price == null)
-				price = quote.last;
-			if (price == null)
-				continue;
-			prices.push({asset, point: {timestamp: new Date(quote.timestamp), price}});
-		}
-		return prices;
-	}
+	async unsubscribe(assets: Asset[]): Promise<void> {
+		for (const asset of assets) this.cache.delete(assetKey(asset));
 
-	private async fetchLiveForex(assets: Asset[]): Promise<AssetPrice[]> {
-		if (!assets.length)
-			return [];
-		const tickers = assets.map(asset => asset.symbol).join(',');
-		const quotes = await this.httpGet<ForexQuote[]>('/tiingo/fx/top', {tickers});
-		const prices: AssetPrice[] = [];
-		for (const quote of quotes) {
-			const asset = assets.find(asset => asset.symbol.toLowerCase() === quote.ticker.toLowerCase());
-			if (!asset)
-				continue;
-			if (quote.midPrice == null)
-				continue;
-			prices.push({asset, point: {timestamp: new Date(quote.quoteTimestamp), price: quote.midPrice}});
-		}
-		return prices;
-	}
-
-	private async fetchLiveCrypto(assets: Asset[]): Promise<AssetPrice[]> {
-		if (!assets.length)
-			return [];
-		const tickers = assets.map(asset => asset.symbol).join(',');
-		const quotes = await this.httpGet<CryptoQuote[]>('/tiingo/crypto/prices', {tickers});
-		const prices: AssetPrice[] = [];
-		for (const quote of quotes) {
-			const asset = assets.find(asset => asset.symbol.toLowerCase() === quote.ticker.toLowerCase());
-			if (!asset)
-				continue;
-			if (!quote.priceData)
-				continue;
-			const bar = quote.priceData.at(-1);
-			if (!bar)
-				continue;
-			prices.push({asset, point: {timestamp: new Date(bar.date), price: bar.close}});
-		}
-		return prices;
-	}
-
-	private toMs(duration: Duration): number {
-		if (duration.unit === 'min')
-			return duration.value * MINUTE_MS;
-		else if (duration.unit === 'hour')
-			return duration.value * HOUR_MS;
-		else
-			return duration.value * DAY_MS;
-	}
-
-	private createParams(asset: Asset, startTime: Date, endTime: Date | undefined, resampleFreq: string): Record<string, string> {
-		const params: Record<string, string> = {};
-		if (asset.type === 'stock') {
-			params.startDate = startTime.toISOString().slice(0, 10);
-			if (endTime)
-				params.endDate = endTime.toISOString().slice(0, 10);
-			if (resampleFreq !== '1day')
-				params.resampleFreq = resampleFreq;
-		} else if (asset.type === 'forex') {
-			params.startDate = startTime.toISOString();
-			if (endTime)
-				params.endDate = endTime.toISOString();
-			params.resampleFreq = resampleFreq;
-		} else {
-			params.startDate = startTime.toISOString();
-			if (endTime)
-				params.endDate = endTime.toISOString();
-			params.resampleFreq = resampleFreq;
-			params.tickers = asset.symbol;
-		}
-		return params;
-	}
-
-	private async fetchBars(asset: Asset, params: Record<string, string>): Promise<PricePoint[]> {
-		let bars: Bar[];
-		if (asset.type === 'stock')
-			bars = await this.fetchStockBars(asset, params);
-		else if (asset.type === 'forex')
-			bars = await this.fetchForexBars(asset, params);
-		else
-			bars = await this.fetchCryptoBars(params);
-		const points = bars.map(bar => {
-			return {timestamp: new Date(bar.date), price: bar.close};
+		const groups = PriceFetcher.groupByRoute(assets, (asset) => {
+			const key = assetKey(asset);
+			const route = this.routes.get(key);
+			this.routes.delete(key);
+			return route;
 		});
-		points.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-		return points;
+		await Promise.all(
+			[...groups.values()].map(({ route, assets }) => this.feeds.get(route.key)?.unsubscribe(assets))
+		);
 	}
 
-	private async fetchStockBars(asset: Asset, params: Record<string, string>): Promise<Bar[]> {
-		const path = encodeURIComponent(asset.symbol);
-		if (params.resampleFreq)
-			return this.httpGet<Bar[]>(`/iex/${path}/prices`, params);
-		return this.httpGet<Bar[]>(`/tiingo/daily/${path}/prices`, params);
+	async stop(): Promise<void> {
+		const feeds = [...this.feeds.values()];
+		this.feeds.clear();
+		this.routes.clear();
+		await Promise.all(feeds.map((feed) => feed.close()));
+		this.cache.clear();
 	}
 
-	private async fetchForexBars(asset: Asset, params: Record<string, string>): Promise<Bar[]> {
-		const path = encodeURIComponent(asset.symbol);
-		return this.httpGet<Bar[]>(`/tiingo/fx/${path}/prices`, params);
+	snapshot(filter?: Asset[]): AssetPrice[] {
+		const now = Date.now();
+		const entries = filter
+			? filter.flatMap((asset) => this.cache.get(assetKey(asset)) ?? [])
+			: [...this.cache.values()];
+
+		return entries.map(({ asset, point, receivedAt }) => ({ asset, point, ageMs: now - receivedAt }));
 	}
 
-	private async fetchCryptoBars(params: Record<string, string>): Promise<Bar[]> {
-		const quotes = await this.httpGet<CryptoQuote[]>('/tiingo/crypto/prices', params);
-		if (!quotes.length)
-			return [];
-		const bars = quotes[0].priceData;
-		if (!bars)
-			return [];
-		return bars;
-	}
+	// --------------------------------------------------------------------------
+	// Internals
+	// --------------------------------------------------------------------------
 
-	private createPriceSeries(points: PricePoint[], startMs: number, endMs: number, intervalMs: number): PricePoint[] {
-		const series: PricePoint[] = [];
-		let index = 0;
-		let lastKnownPrice = points[0].price;
-		for (let time = startMs; time < endMs; time += intervalMs) {
-			while (index < points.length && points[index].timestamp.getTime() <= time) {
-				lastKnownPrice = points[index].price;
-				index++;
-			}
-			series.push({timestamp: new Date(time), price: lastKnownPrice});
+	private static groupByRoute(
+		assets: Asset[],
+		routeOf: (asset: Asset) => Route | undefined
+	): Map<string, { route: Route; assets: Asset[] }> {
+		const groups = new Map<string, { route: Route; assets: Asset[] }>();
+		for (const asset of assets) {
+			const route = routeOf(asset);
+			if (!route) continue;
+			const group = groups.get(route.key) ?? { route, assets: [] };
+			group.assets.push(asset);
+			groups.set(route.key, group);
 		}
-		return series;
+		return groups;
 	}
 
-	private async httpGet<T>(path: string, params?: Record<string, string>): Promise<T> {
-		const url = new URL(path, this.baseUrl);
-		if (params) {
-			for (const [key, value] of Object.entries(params))
-				url.searchParams.set(key, value);
+	private assign(asset: Asset): Route {
+		const key = assetKey(asset);
+		let route = this.routes.get(key);
+		if (!route) {
+			const finnhubFull =
+				asset.type === 'us' && this.finnhubCount() >= PriceFetcher.FINNHUB_MAX_SYMBOLS;
+			route = makeRoute(asset.type, finnhubFull ? 'us-yahoo-overflow' : 'primary');
+			this.routes.set(key, route);
 		}
-		const headers = {Authorization: `Token ${this.token}`, Accept: 'application/json'};
-		const response = await fetch(url, {headers});
-		if (!response.ok)
-			throw new Error(`Tiingo API error ${response.status} for ${path}`);
-		return response.json() as Promise<T>;
+		return route;
+	}
+
+	private finnhubCount(): number {
+		let count = 0;
+		for (const route of this.routes.values()) {
+			if (route.type === 'us' && route.provider === 'primary') count++;
+		}
+		return count;
+	}
+
+	private getFeed(route: Route): IFeed {
+		let feed = this.feeds.get(route.key);
+		if (!feed) {
+			feed = createFeed(route.type, this.finnhubApiKey, route.provider);
+			feed.on('tick', (asset, price, time) => this.onTick(asset, price, time));
+			feed.on('status', (status) => this.emit('feedStatus', route.type, status));
+			feed.on('error', (error) => this.emit('feedError', route.type, error));
+			this.feeds.set(route.key, feed);
+		}
+		return feed;
+	}
+
+	/**
+	 * Feeds emit validated ticks (price > 0, valid time). We only guard against
+	 * out-of-order arrivals here: a batched provider (Yahoo) can deliver an
+	 * older tick after a newer one, and the cache must keep the newest.
+	 */
+	private onTick(asset: Asset, price: number, marketTime: Date): void {
+		const key = assetKey(asset);
+		const existing = this.cache.get(key);
+		if (existing && marketTime.getTime() < existing.point.timestamp.getTime()) return;
+
+		const point: PricePoint = { timestamp: marketTime, price };
+		this.cache.set(key, { asset, point, receivedAt: Date.now() });
+		this.emit('price', { asset, point, ageMs: 0 } satisfies AssetPrice);
 	}
 }
