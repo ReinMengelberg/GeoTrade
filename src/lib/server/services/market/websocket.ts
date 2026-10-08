@@ -1,14 +1,40 @@
+/**
+ * websocket.ts — one WebSocket with automatic reconnection.
+ *
+ * Knows nothing about assets or protocols. Delivers raw frames, reports
+ * transport state, keeps the connection alive. Everything above treats it
+ * as a black box.
+ */
+
 import WebSocket from 'ws';
+import type { ConnectionStatus } from './types';
 
-export type WsStatus = 'connecting' | 'open' | 'closed';
+/** Normalizes a thrown value into an `Error`. JS allows throwing anything. */
+export const toError = (e: unknown): Error => (e instanceof Error ? e : new Error(String(e)));
 
-export interface ManagedWsOptions {
+/**
+ * Invokes a notification callback, swallowing anything it throws. These run
+ * inside socket event handlers — a throw there is an uncaught exception.
+ */
+const safeCall = <T>(fn: ((arg: T) => void) | undefined, arg: T): void => {
+	try {
+		fn?.(arg);
+	} catch {
+		// A notification callback can't meaningfully fail.
+	}
+};
+
+export interface ManagedWebSocketOptions {
 	/** WebSocket endpoint (ws:// or wss://). */
 	url: string;
-	/** Called for every incoming frame. Exceptions are routed to `onError`. */
+	/** Called for every incoming frame. Exceptions route to `onError`. */
 	onMessage: (data: WebSocket.RawData) => void;
-	/** Called on every (re)open, and periodically if `resubscribeIntervalMs` is set. */
-	resubscribe?: (ws: WebSocket) => void;
+	/**
+	 * Called on every (re)open, and periodically if `resubscribeIntervalMs`
+	 * is set. Takes no arguments — the caller sends its own subscription
+	 * state via `send()`.
+	 */
+	resubscribe?: () => void;
 	/** If > 0, calls `resubscribe` on this interval while the socket is open. */
 	resubscribeIntervalMs?: number;
 	/**
@@ -18,48 +44,56 @@ export interface ManagedWsOptions {
 	 * legitimately (equities outside market hours).
 	 */
 	idleTimeoutMs?: number;
-	/** Fires only on real transitions, never twice in a row with the same value. */
-	onStatusChange?: (status: WsStatus) => void;
-	/** Sink for socket errors and consumer-callback exceptions. Never throws asynchronously. */
+	/** Fires only on real transitions. */
+	onStatusChange?: (status: ConnectionStatus) => void;
+	/** Sink for socket errors and callback exceptions. Never throws asynchronously. */
 	onError?: (error: Error) => void;
 	/** Upper bound for the reconnect delay. Default: 30 000 ms. */
 	maxBackoffMs?: number;
 }
 
 /**
- * A single WebSocket connection with automatic reconnection.
+ * A single WebSocket with automatic reconnection.
  *
- * Lifecycle:
- *   - `connect()` resolves on the first successful open and rejects if that first
- *     attempt fails (or if `close()` / another `connect()` interrupts it).
- *     After a failed first attempt, retries continue in the background until
- *     `close()` is called.
+ *   - `connect()` resolves on the first open, rejects if that first attempt
+ *     fails (or if `close()` / another `connect()` supersedes it). After a
+ *     failed first attempt, retries continue in the background until `close()`.
  *   - `close()` is final until the next `connect()`.
  *
- * Behavioural guarantees:
+ * Contract:
  *   1. At most one live socket. A second `connect()` retires the previous one.
- *   2. The `connect()` promise settles exactly once per call.
- *   3. Consumer callbacks (`onMessage`, `resubscribe`) may throw; the class survives.
+ *   2. `connect()` settles exactly once per call.
+ *   3. Consumer callbacks may throw; the process does not crash.
  *   4. Stale sockets cannot fire handlers — identity-checked on every event.
+ *      `teardown()` clears `this.socket` before `ws.close()`, so late events
+ *      from a retired socket fail the check.
  *   5. `onStatusChange` fires only on real transitions.
- *   6. Reconnection is scheduled from exactly one place: the `close` handler.
- *   7. An invalid URL is fatal: `active` is cleared, the promise rejects, no retry.
+ *   6. Reconnection is scheduled from exactly one place — the `close` handler.
+ *      `ws` always follows `error` with `close`; scheduling in both double-
+ *      reconnects.
+ *   7. An invalid URL is fatal — `active` clears, promise rejects, no retry.
  *   8. `send()` never throws. Returns false when the socket isn't open.
- *   9. Query strings in URLs (which carry API tokens) never appear in error messages.
- *  10. The backoff counter resets only after the connection has been stable for
- *      a while — a flapping server keeps growing the delay instead of hammering.
- *  11. Teardown force-terminates a socket that doesn't close promptly.
+ *   9. Query strings are stripped from every error message that reaches
+ *      `onError` or rejects the `connect()` promise, so API tokens cannot
+ *      leak into logs.
+ *  10. Backoff resets only after 30s of stability, so a flapping server keeps
+ *      growing the delay instead of hammering.
+ *  11. Teardown force-terminates a socket that doesn't close within 2s.
  */
 export class ManagedWebSocket {
-	/** How long a connection must stay up before the backoff counter is forgiven. */
 	private static readonly STABLE_WINDOW_MS = 30_000;
-	/** How long `teardown()` waits for a graceful close before force-terminating. */
 	private static readonly CLOSE_GRACE_MS = 2_000;
 
-	private readonly opts: ManagedWsOptions;
+	private readonly opts: ManagedWebSocketOptions;
 	private socket?: WebSocket;
-	private status: WsStatus = 'closed';
+	private status: ConnectionStatus = 'closed';
+	/**
+	 * User intent. True between `connect()` and `close()`. Persists across
+	 * reconnects — this is what distinguishes "closed because we're retrying"
+	 * from "closed because the caller is done".
+	 */
 	private active = false;
+	/** Consecutive failed attempts since the last stable connection. */
 	private attempts = 0;
 	private retryTimer?: NodeJS.Timeout;
 	private resubTimer?: NodeJS.Timeout;
@@ -67,14 +101,11 @@ export class ManagedWebSocket {
 	private idleTimer?: NodeJS.Timeout;
 	private pending?: { resolve: () => void; reject: (error: Error) => void };
 
-	constructor(opts: ManagedWsOptions) {
+	constructor(opts: ManagedWebSocketOptions) {
 		this.opts = opts;
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// Public API
-	// ─────────────────────────────────────────────────────────────────────────
-
+	/** Resolves on the first open; rejects on the first failure or if superseded. */
 	connect(): Promise<void> {
 		this.teardown(new Error('connect() superseded by a new call'));
 		this.active = true;
@@ -85,6 +116,7 @@ export class ManagedWebSocket {
 		});
 	}
 
+	/** Final until the next `connect()`. */
 	close(): void {
 		this.active = false;
 		this.teardown(new Error('close() called by user'));
@@ -92,9 +124,9 @@ export class ManagedWebSocket {
 	}
 
 	/**
-	 * Sends one frame on the open socket. Returns false (never throws) if the
-	 * socket isn't open; the frame is dropped, not queued. The `resubscribe`
-	 * callback on the next open is expected to restore whatever state was lost.
+	 * Sends one frame. Returns false — without throwing — if the socket isn't
+	 * open. The frame is dropped, not queued; the `resubscribe` callback on
+	 * the next open is expected to restore whatever was lost.
 	 */
 	send(data: string | Buffer): boolean {
 		const ws = this.socket;
@@ -108,6 +140,12 @@ export class ManagedWebSocket {
 		}
 	}
 
+	/**
+	 * Parses a raw message as JSON, or returns `undefined`.
+	 *
+	 * `RawData` is `Buffer | ArrayBuffer | Buffer[]`. Fragments must be
+	 * concatenated — `toString()` on the array inserts commas.
+	 */
 	static parseJson<T>(raw: WebSocket.RawData): T | undefined {
 		try {
 			const buf = Array.isArray(raw)
@@ -121,9 +159,7 @@ export class ManagedWebSocket {
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// Connection lifecycle
-	// ─────────────────────────────────────────────────────────────────────────
+	// ─── Connection lifecycle ───────────────────────────────────────────────
 
 	private open(): void {
 		if (!this.active) return;
@@ -133,6 +169,7 @@ export class ManagedWebSocket {
 		try {
 			ws = new WebSocket(this.opts.url);
 		} catch (error) {
+			// Invalid URL / protocol — retrying can't fix it.
 			this.active = false;
 			this.setStatus('closed');
 			this.notifyError(toError(error));
@@ -148,7 +185,7 @@ export class ManagedWebSocket {
 		ws.on('open', () => {
 			if (this.socket !== ws) return;
 			this.setStatus('open');
-			this.safeResubscribe(ws);
+			this.safeResubscribe();
 			this.startResubTimer(ws);
 			this.startStableTimer();
 			this.resetIdleTimer(ws);
@@ -167,6 +204,8 @@ export class ManagedWebSocket {
 
 		ws.on('error', error => {
 			if (this.socket !== ws) return;
+			// `ws` always emits 'close' after 'error'. Only the close handler
+			// schedules a reconnect — scheduling here double-reconnects.
 			this.notifyError(error);
 			this.settle(error);
 		});
@@ -184,6 +223,8 @@ export class ManagedWebSocket {
 
 	private scheduleReconnect(): void {
 		if (!this.active || this.retryTimer) return;
+		// Exponential backoff (1s, 2s, 4s, ...), capped, multiplied by jitter
+		// in [0.5, 1.0) — the standard "equal jitter".
 		const cap = this.opts.maxBackoffMs ?? 30_000;
 		const base = Math.min(cap, 1000 * 2 ** this.attempts);
 		this.attempts += 1;
@@ -191,23 +232,24 @@ export class ManagedWebSocket {
 			this.retryTimer = undefined;
 			if (this.active) this.open();
 		}, base * (0.5 + Math.random() * 0.5));
+		this.retryTimer.unref?.();
 	}
 
 	/**
-	 * Retires the current socket. Graceful close first; force-terminate if the
-	 * server doesn't close the handshake within CLOSE_GRACE_MS. This makes
-	 * `stop()` bounded even against an unresponsive server.
+	 * Retires the current socket. Graceful close first; force-terminate if
+	 * the server doesn't close the handshake within `CLOSE_GRACE_MS`. Bounds
+	 * `stop()` even against an unresponsive server.
 	 */
 	private teardown(reason: Error): void {
 		this.clearTimers();
 		const ws = this.socket;
-		this.socket = undefined;
+		this.socket = undefined; // before close: see attachListeners
 
 		if (ws) {
 			try {
 				ws.close();
 			} catch {
-				// ignore — we're terminating below
+				// terminating below
 			}
 			const killTimer = setTimeout(() => {
 				try {
@@ -222,23 +264,23 @@ export class ManagedWebSocket {
 		this.settle(reason);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// Timers
-	// ─────────────────────────────────────────────────────────────────────────
+	// ─── Timers ─────────────────────────────────────────────────────────────
 
 	private startResubTimer(ws: WebSocket): void {
 		if (!this.opts.resubscribeIntervalMs) return;
 		this.resubTimer = setInterval(() => {
+			// Guard against the window where readyState is CLOSING but 'close'
+			// hasn't fired.
 			if (this.socket === ws && ws.readyState === WebSocket.OPEN) {
-				this.safeResubscribe(ws);
+				this.safeResubscribe();
 			}
 		}, this.opts.resubscribeIntervalMs);
 	}
 
 	/**
-	 * Resets the backoff counter only after the connection has been stable for
-	 * STABLE_WINDOW_MS. A server that accepts and immediately drops therefore
-	 * keeps growing the retry delay instead of being hammered once per second.
+	 * Resets `attempts` only after the connection has been stable for
+	 * `STABLE_WINDOW_MS`. A server that accepts and immediately drops keeps
+	 * growing the retry delay instead of being hammered.
 	 */
 	private startStableTimer(): void {
 		clearTimeout(this.stableTimer);
@@ -250,8 +292,8 @@ export class ManagedWebSocket {
 	}
 
 	/**
-	 * Restarts the idle watchdog. Fires when no message has arrived within
-	 * `idleTimeoutMs`, terminating the socket so the close handler can reconnect.
+	 * Restarts the idle watchdog. Fires when no message arrives within
+	 * `idleTimeoutMs`, terminating the socket so the close handler reconnects.
 	 */
 	private resetIdleTimer(ws: WebSocket): void {
 		clearTimeout(this.idleTimer);
@@ -280,49 +322,48 @@ export class ManagedWebSocket {
 		this.idleTimer = undefined;
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// connect() promise plumbing
-	// ─────────────────────────────────────────────────────────────────────────
+	// ─── Plumbing ───────────────────────────────────────────────────────────
 
+	/** Settles the pending `connect()` at most once, with the error redacted. */
 	private settle(error?: Error): void {
 		const pending = this.pending;
 		this.pending = undefined;
 		if (!pending) return;
-		if (error) pending.reject(error);
+		if (error) pending.reject(ManagedWebSocket.redactError(error));
 		else pending.resolve();
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// Safe invocation of consumer callbacks
-	// ─────────────────────────────────────────────────────────────────────────
-
-	private safeResubscribe(ws: WebSocket): void {
+	private safeResubscribe(): void {
 		try {
-			this.opts.resubscribe?.(ws);
+			this.opts.resubscribe?.();
 		} catch (error) {
 			this.notifyError(toError(error));
 		}
 	}
 
 	private notifyError(error: Error): void {
-		this.opts.onError?.(error);
+		safeCall(this.opts.onError, ManagedWebSocket.redactError(error));
 	}
 
-	private setStatus(next: WsStatus): void {
+	private setStatus(next: ConnectionStatus): void {
 		if (this.status === next) return;
 		this.status = next;
-		this.opts.onStatusChange?.(next);
+		safeCall(this.opts.onStatusChange, next);
 	}
 
 	/** Strips the query string, so API tokens never land in error messages. */
 	private static redactUrl(url: string): string {
-		const q = url.indexOf('?');
-		return q >= 0 ? url.slice(0, q) : url;
+		return url.split('?', 1)[0];
+	}
+
+	/**
+	 * Removes query strings from any URL that appears in an error message.
+	 * Applied to every error that reaches `onError` or rejects `connect()`.
+	 */
+	private static redactError(error: Error): Error {
+		// `?` followed by anything up to whitespace or a quote is treated as
+		// a query string and dropped.
+		const message = error.message.replace(/\?[^\s"']*/g, '');
+		return new Error(message);
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Module-level helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-const toError = (e: unknown): Error => (e instanceof Error ? e : new Error(String(e)));

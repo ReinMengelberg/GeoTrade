@@ -1,0 +1,17 @@
+# Input for the demo scripts. One asset per line: name,symbol,type.
+# Lines starting with '#' and blank lines are ignored.
+#
+# Types:
+#   us      → Finnhub (live) / Yahoo (history)
+#   global  → Yahoo (live and history)
+#   forex   → BiQuote (live) / Yahoo futures (history)
+#   crypto  → Binance (live and history)
+name,symbol,type
+Apple,AAPL,us
+NVIDIA,NVDA,us
+Shopify,SHOP.TO,global
+SAP,SAP.DE,global
+Euro Dollar,EURUSD,forex
+Gold,XAUUSD,forex
+Bitcoin,BTCUSDT,crypto
+Ethereum,ETHUSDT,crypto
