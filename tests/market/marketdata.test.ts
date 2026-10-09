@@ -373,3 +373,12 @@ test('subscribe: failure.assets is deduplicated like subscribed', async () => {
 		'duplicate input collapses to one entry in the failure payload'
 	);
 });
+
+test('feedStatus: payload is { type, provider, status }', async () => {
+    const { fetcher, byRoute } = makeFetcher();
+    await fetcher.subscribe([AAPL]);
+    const events: Array<{ type: string; provider: string; status: string }> = [];
+    fetcher.on('feedStatus', (e) => events.push({ type: e.type, provider: e.provider, status: e.status }));
+    byRoute.get('us:primary')!.emit('status', 'open');
+    assert.ok(events.some((e) => e.type === 'us' && e.provider === 'primary'));
+});
